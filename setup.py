@@ -1,0 +1,27 @@
+from setuptools import setup, find_packages
+
+setup(
+    name='brainboost_data_source_logger_package',
+    version='1.0.0',
+    author='Pablo Tomas Borda',
+    author_email='pablotomasborda@gmail.com',
+    description='A package for logging data sources in BrainBoost projects.',
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
+    url='https://github.com/yourusername/brainboost_data_source_logger_package',
+    packages=find_packages(),
+    install_requires=[
+        'requests>=2.25.1',
+        # Add other dependencies here
+    ],
+    classifiers=[
+        'Programming Language :: Python :: 3',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+    ],
+    python_requires='>=3.6',
+    install_requires=[
+        "brainboost_configuration_package @ file:///brainboost/packages/brainboost_configuration_package",
+        # Add other dependencies here
+    ]
+)
