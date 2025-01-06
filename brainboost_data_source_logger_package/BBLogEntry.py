@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+from brainboost_configuration_package.BBConfig import BBConfig
 
 class BBLogEntry:
     def __init__(self, process, timestamp, log_type, message, processing_time, code_location,config=None):

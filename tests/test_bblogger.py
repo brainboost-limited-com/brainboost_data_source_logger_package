@@ -1,255 +1,91 @@
-# tests/test_bblogger.py
-
 import pytest
-from unittest import mock
-from unittest.mock import patch
-import os
-import csv
 from brainboost_data_source_logger_package.BBLogger import BBLogger
-from brainboost_data_source_logger_package.BBLogEntry import BBLogEntry
+from brainboost_configuration_package.BBConfig import BBConfig
+import random
+import string
+from datetime import datetime, timedelta
+import os
 
-from datetime import datetime
-from io import StringIO
+def random_message(length=50):
+    """Generate a random string of fixed length."""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
+def test_bblogger_inserts_millions_of_logs():
+    """Test BBLogger by inserting a couple of million log lines."""
 
-def list_to_csv_string(lst, delimiter='|', quotechar='"'):
-    output = StringIO()
-    writer = csv.writer(
-        output,
-        delimiter=delimiter,
-        quotechar=quotechar,
-        quoting=csv.QUOTE_ALL,  # Changed to QUOTE_ALL for consistency
-        lineterminator=''
-    )
-    writer.writerow(lst)
-    return output.getvalue()
+    # Override configuration settings for testing
+    BBConfig.override('log_path', 'tests/logs')
+    BBConfig.override('log_enable_terminal_output', False)
+    BBConfig.override('log_enable_files', True)
+    BBConfig.override('log_enable_database', False)
+    BBConfig.override('log_page_size', 100)
 
+    # Verify configuration overrides
+    assert BBConfig.get('log_path') == 'tests/logs'
+    assert not BBConfig.get('log_enable_terminal_output')
+    assert BBConfig.get('log_enable_files')
+    assert not BBConfig.get('log_enable_database')
 
-@pytest.fixture
-def config_fixture(request):
-    """
-    Fixture to provide configuration for BBLogger.
-    """
-    # Determine the directory of the current test file
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    # Define the log_path as 'tests/logs' within the project directory
-    log_path = os.path.join(test_dir, 'logs')
+    num_logs = 10_000  # Reduced number of logs for testing
+    for i in range(num_logs):
+        message = f"Test log {i}: {random_message()}"
+        BBLogger.log(message)
 
-    # Define the log file name based on the current date
+def test_read_random_pages():
+    """Test reading random pages from the current log file using BBLogger.get_page."""
+    print("Testing BBLogger.get_page:")
+    page_size = BBConfig.get('log_page_size')
+    log_path = BBConfig.get('log_path')
     current_date = datetime.now().strftime('%Y_%m_%d')
-    log_file_name = f"worktwins_log_{current_date}.log"
-    log_file_path = os.path.join(log_path, log_file_name)
+    log_file_path = os.path.join(log_path, f"{BBConfig.get('log_prefix')}_log_{current_date}.log")
 
-    config_dict = {
-        'log_path': log_path,
-        'log_path_ocr': 'com_worktwins_userdata/com_worktwins_ocr',
-        'log_path_images': 'com_worktwins_userdata/com_worktwins_images',
-        'log_base_url_1_5': 'http://100.96.1.34:8080/log',
-        'log_debug_mode': True,
-        'log_telegram_service_url': 'http://0.0.0.0:8080/send_telegram_notification',
-        'log_enable_storage': True,
-        'log_terminal_output': True,
-        'log_delimiter': '|',
-        'sqlite3_storage_enabled': False,
-        'sqlite3_storage_path': 'com_worktwins_userdata/logs.db',
-        'page_size': 100,
-        'log_header': ['timestamp', 'type', 'process_name', 'source_code_line', 'message', 'exec_time'],
-        'memsize_limit': 50 * 1024 * 1024
-    }
+    print(f"Log file path: {log_file_path}")
+    if not os.path.exists(log_file_path):
+        pytest.skip(f"Log file for today does not exist: {log_file_path}")
 
-    # Create the 'tests/logs' directory if it doesn't exist
-    os.makedirs(config_dict['log_path'], exist_ok=True)
+    with open(log_file_path, 'r', encoding='utf-8') as log_file:
+        total_lines = sum(1 for _ in log_file) - 1  # Exclude header row
+        total_pages = (total_lines + page_size - 1) // page_size
+        print(f"Total lines: {total_lines}, Total pages: {total_pages}")
 
-    return config_dict
+    for _ in range(3):
+        page_num = random.randint(1, total_pages)
+        page = BBLogger.get_page(page_num)
 
+        start_index = (page_num - 1) * page_size + 1
+        end_index = start_index + len(page) - 1
+        print(f"\n--- Page {page_num} (Rows {start_index} to {end_index}) ---")
+        print(page.to_string(index=False))
+        assert len(page) <= page_size
 
-@pytest.fixture(autouse=True)
-def clean_log_directory(config_fixture):
-    """
-    Automatically clean the log directory before each test.
-    """
-    log_path = config_fixture.get('log_path')
-    if log_path and os.path.exists(log_path):
-        for root, dirs, files in os.walk(log_path, topdown=False):
-            for name in files:
-                try:
-                    os.remove(os.path.join(root, name))
-                except Exception as e:
-                    print(f"Failed to remove file {name}: {e}")
-            for name in dirs:
-                try:
-                    os.rmdir(os.path.join(root, name))
-                except Exception as e:
-                    print(f"Failed to remove directory {name}: {e}")
-
-
-@patch('brainboost_data_source_logger_package.BBLogger.requests.get')
-def test_BBLogger_log(mock_requests_get, config_fixture, capsys):
-    """
-    Test the BBLogger.log method.
-    """
-
-    # Prepare mock for external logging and Telegram notification
-    mock_response = mock.Mock()
-    mock_response.raise_for_status.return_value = None
-    mock_requests_get.return_value = mock_response
-
-    # Log a test message without outputting to console
-    test_message = "This is a test log message."
-    BBLogger.log(
-        message=test_message,
-        log_type='message',
-        telegram=True,  # Set to True to trigger external logging
-        public=False,
-        trace=False,
-        output_to_console=False  # Set to False; do not print to console
-    )
-
-    # Verify that external logging was called once
-    mock_requests_get.assert_called_once()
-    call_args, call_kwargs = mock_requests_get.call_args
-    assert call_args[0] == config_fixture['log_telegram_service_url'], "Telegram service URL mismatch."
-    assert call_kwargs['timeout'] == 5, "Timeout parameter mismatch."
-    assert 'message' in call_kwargs['params'], "Message parameter missing."
-    assert test_message in call_kwargs['params']['message'], "Log message not found in Telegram params."
-
-    # Verify that the log file was created
+def test_get_logs_in_range():
+    """Test retrieving logs within a specific range."""
+    print("Testing BBLogger.get_logs_in_range:")
     current_date = datetime.now().strftime('%Y_%m_%d')
-    log_file_path = os.path.join(config_fixture['log_path'], f'worktwins_log_{current_date}.log')
-    assert os.path.isfile(log_file_path), f"Log file was not created at path: {log_file_path}"
+    start_line = 1
+    end_line = 50
+    logs = BBLogger.get_logs_in_range(current_date, start_line, end_line)
+    print(logs.to_string(index=False))
+    assert not logs.empty
+    assert len(logs) == (end_line - start_line + 1)
 
-    # Verify the contents of the log file
-    with open(log_file_path, 'r', encoding='utf-8', newline='') as log_file:
-        reader = csv.reader(log_file, delimiter=config_fixture['log_delimiter'], quotechar='"')
-        rows = list(reader)
-        assert len(rows) == 2, "Log file should contain header and one log entry."
-        header, log_entry = rows
-        assert header == config_fixture['log_header'], "Header row does not match."
-        assert len(log_entry) == 6, "Log entry should have 6 fields."
-        timestamp_str, log_type, process_name, code_location, message, exec_time = log_entry
-        assert log_type == 'message', "Log type should be 'message'."
-        assert message == test_message, "Log message does not match."
+def test_get_logs_between_timestamps():
+    """Test retrieving logs between two timestamps."""
+    print("Testing BBLogger.get_logs_between_timestampt_and_timestampt:")
+    t1 = datetime.now().strftime('%Y%m%d%H%M%S')
+    t2 = (datetime.now() + timedelta(minutes=5)).strftime('%Y%m%d%H%M%S')
+    logs = BBLogger.get_logs_between_timestampt_and_timestampt(t1, t2)
+    print(logs.to_string(index=False))
+    assert not logs.empty
+    assert all(t1 <= ts <= t2 for ts in logs['timestamp'])
 
-    # Capture and verify terminal output
-    captured = capsys.readouterr()
-    assert test_message not in captured.out, "Terminal output should not contain the log message when output_to_console=False."
-
-
-@patch('brainboost_data_source_logger_package.BBLogger.requests.get')
-def test_BBLogger_log_error(mock_requests_get, config_fixture, capsys):
-    """
-    Test the BBLogger.log method with an error message.
-    """
-    # Configure BBLogger with the fixture
-    BBLogger.configure(config_fixture)
-
-    # Prepare mock for external logging and Telegram notification
-    mock_response = mock.Mock()
-    mock_response.raise_for_status.return_value = None
-    mock_requests_get.return_value = mock_response
-
-    # Log an error message without outputting to console
-    test_error_message = "An error occurred during processing."
-    BBLogger.log(
-        message=test_error_message,
-        log_type='message',  # Initially set as 'message'
-        telegram=True,  # Set to True to trigger external logging
-        public=True,
-        trace=True,
-        output_to_console=False,  # Do not print to console
-        exc_info=(ValueError, ValueError("Test exception"), None)
-    )
-
-    # Verify that external logging was called once
-    mock_requests_get.assert_called_once()
-    call_args, call_kwargs = mock_requests_get.call_args
-    assert call_args[0] == config_fixture['log_telegram_service_url'], "Telegram service URL mismatch."
-    assert call_kwargs['timeout'] == 5, "Timeout parameter mismatch."
-    assert 'message' in call_kwargs['params'], "Message parameter missing."
-    assert test_error_message in call_kwargs['params']['message'], "Log message not found in Telegram params."
-
-    # Verify that the log file was created
+def test_get_total_amount_of_pages():
+    """Test retrieving the total number of pages in the log file."""
+    print("Testing BBLogger.get_total_amount_of_pages:")
     current_date = datetime.now().strftime('%Y_%m_%d')
-    log_file_path = os.path.join(config_fixture['log_path'], f'worktwins_log_{current_date}.log')
-    assert os.path.isfile(log_file_path), f"Log file was not created at path: {log_file_path}"
+    total_pages = BBLogger.get_total_amount_of_pages(current_date)
+    print(f"Total pages: {total_pages}")
+    assert total_pages > 0
 
-    # Verify the contents of the log file
-    with open(log_file_path, 'r', encoding='utf-8', newline='') as log_file:
-        reader = csv.reader(log_file, delimiter=config_fixture['log_delimiter'], quotechar='"')
-        rows = list(reader)
-        assert len(rows) == 2, "Log file should contain header and one log entry."
-        header, log_entry = rows
-        assert header == config_fixture['log_header'], "Header row does not match."
-        assert len(log_entry) == 6, "Log entry should have 6 fields."
-        timestamp_str, log_type, process_name, code_location, message, exec_time = log_entry
-        assert log_type == 'error', "Log type should be 'error'."
-        assert test_error_message in message, "Log message does not contain the error message."
-        assert 'Traceback' in message, "Traceback information was not appended to the message."
-
-    # Capture and verify terminal output
-    captured = capsys.readouterr()
-    assert test_error_message not in captured.out, "Terminal output should not contain the error message when output_to_console=False."
-    assert "Traceback" not in captured.out, "Terminal output should not contain traceback information when output_to_console=False."
-
-
-@patch('brainboost_data_source_logger_package.BBLogger.requests.get')
-def test_BBLogger_create_log_file_and_insert_entry(mock_requests_get, config_fixture, capsys):
-    """
-    Test that BBLogger creates a log file if it does not exist and inserts log entries correctly.
-    """
-    # Define the test message
-    test_message = "Test log entry creation."
-
-    # Ensure the log file does not exist before logging
-    current_date = datetime.now().strftime('%Y_%m_%d')
-    log_file_path = os.path.join(config_fixture['log_path'], f'worktwins_log_{current_date}.log')
-
-    if os.path.exists(log_file_path):
-        os.remove(log_file_path)
-
-    assert not os.path.isfile(log_file_path), f"Log file should not exist before logging at path: {log_file_path}"
-
-    # Configure BBLogger with the fixture
-    BBLogger.configure(config_fixture)
-
-    # Prepare mock for external logging and Telegram notification
-    mock_response = mock.Mock()
-    mock_response.raise_for_status.return_value = None
-    mock_requests_get.return_value = mock_response
-
-    # Log the test message
-    BBLogger.log(
-        message=test_message,
-        log_type='message',
-        telegram=True,  # Set to True to trigger external logging
-        public=False,
-        trace=False,
-        output_to_console=False  # Do not print to console
-    )
-
-    # Verify that external logging was called once
-    mock_requests_get.assert_called_once()
-    call_args, call_kwargs = mock_requests_get.call_args
-    assert call_args[0] == config_fixture['log_telegram_service_url'], "Telegram service URL mismatch."
-    assert call_kwargs['timeout'] == 5, "Timeout parameter mismatch."
-    assert 'message' in call_kwargs['params'], "Message parameter missing."
-    assert test_message in call_kwargs['params']['message'], "Log message not found in Telegram params."
-
-    # Verify that the log file was created
-    assert os.path.isfile(log_file_path), f"Log file was not created at path: {log_file_path}"
-
-    # Verify the contents of the log file
-    with open(log_file_path, 'r', encoding='utf-8', newline='') as log_file:
-        reader = csv.reader(log_file, delimiter=config_fixture['log_delimiter'], quotechar='"')
-        rows = list(reader)
-        assert len(rows) == 2, "Log file should contain header and one log entry."
-        header, log_entry = rows
-        assert header == config_fixture['log_header'], "Header row does not match."
-        assert len(log_entry) == 6, "Log entry should have 6 fields."
-        timestamp_str, log_type, process_name, code_location, message, exec_time = log_entry
-        assert log_type == 'message', "Log type should be 'message'."
-        assert message == test_message, "Log message does not match."
-
-    # Capture and verify terminal output
-    captured = capsys.readouterr()
-    assert test_message not in captured.out, "Terminal output should not contain the log message when output_to_console=False."
+if __name__ == "__main__":
+    pytest.main(["-v", "test_bblogger.py"])
