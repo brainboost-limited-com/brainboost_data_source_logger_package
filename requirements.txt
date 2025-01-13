@@ -1,2 +1,2 @@
 # Editable local package
--e /brainboost/packages/brainboost_configuration_package/
+-e /brainboost/packages/brainboost_configuration_package

@@ -12,9 +12,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         'requests>=2.25.1',
-        # Add other dependencies here
-        # Uncomment and modify the line below if you need to include a local package
-        # 'brainboost_configuration_package @ file:///brainboost/packages/brainboost_configuration_package',
+        'brainboost_configuration_package'
     ],
     classifiers=[
         'Programming Language :: Python :: 3',
